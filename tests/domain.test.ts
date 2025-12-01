@@ -1,0 +1,5 @@
+import assert from "node:assert/strict"; import test from "node:test"; import {createCheckout,evaluateFraud,IdempotencyStore,validateRequest} from "../src/domain/checkout.js";
+test("rejects non-opaque card data",()=>assert.throws(()=>validateRequest({orderId:"ord_1",amountMinor:100,currency:"USD",paymentMethodToken:"4111111111111111",customer:{email:"a@example.com",ip:"203.0.113.1"}})));
+test("routes medium risk to review",()=>assert.equal(evaluateFraud({orderId:"ord_1",amountMinor:100000,currency:"USD",paymentMethodToken:"tok_demo",customer:{email:"a@example.com",ip:"203.0.113.1"}}).decision,"review"));
+test("denies high risk and preserves token privacy",()=>{const result=createCheckout({orderId:"ord_1",amountMinor:150000,currency:"USD",paymentMethodToken:"tok_secret",customer:{email:"a@example.com",ip:"198.51.100.2"}}); assert.equal(result.status,"declined"); assert.match(result.tokenFingerprint,/^fp_/); assert.ok(!JSON.stringify(result).includes("tok_secret"))});
+test("idempotency store returns the original result",()=>{const store=new IdempotencyStore<string>(); store.put("idem_1","first"); assert.equal(store.get("idem_1"),"first")});

@@ -1,0 +1,70 @@
+# Secure Payment Checkout Simulator
+
+A production-style checkout simulator that makes the hard payment concerns explicit: token-only inputs, validation, idempotency, deterministic fraud decisions, audit events, PostgreSQL schema, Docker packaging, and a small React client.
+
+It is a simulator, not a live payment processor. It never accepts raw card numbers and never claims to settle money.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  Web[React demo] -->|POST /v1/checkouts| API[Node REST API]
+  API --> Validate[Request validation]
+  Validate --> Idem[Idempotency store]
+  Idem --> Fraud[Rule-based fraud evaluation]
+  Fraud --> Result[Authorization result]
+  Result --> Audit[Audit event]
+  Result --> DB[(PostgreSQL checkout_attempts)]
+```
+
+## Structural overview
+
+```text
+src/
+  domain/checkout.ts  request contract, token fingerprinting, fraud rules, result factory
+  audit.ts            append-only audit event abstraction
+  server.ts           HTTP boundary, error mapping, idempotency replay
+sql/schema.sql        durable persistence contract
+web/                  React demo client
+ tests/               domain invariants
+Dockerfile            immutable production image
+docker-compose.yml    API + PostgreSQL local environment
+```
+
+## Workflow
+
+1. The client sends an opaque payment token and a unique `Idempotency-Key`.
+2. The API rejects malformed input before any downstream call.
+3. A repeated key returns the original result and emits a replay audit event.
+4. The fraud policy scores high amount, synthetic domains, and test-network traffic.
+5. Low-risk requests become `authorized`; medium risk becomes `review`; high risk becomes `declined`.
+6. Only a deterministic token fingerprint is persisted or returned.
+
+## Why this shape
+
+The domain layer is independent of HTTP and PostgreSQL so the important invariants can be tested without a running service. The idempotency store is an interface-shaped in-memory implementation for the demo; a production deployment should use a unique database constraint plus an atomic insert/read transaction. Rule-based fraud is intentionally explainable and deterministic; a model can be added later behind the same decision contract, but it should not replace auditability or allow/deny policy review.
+
+## Run locally
+
+```bash
+npm ci
+npm test
+npm run build
+node dist/server.js
+```
+
+Run the full local stack:
+
+```bash
+docker compose up --build
+```
+
+The API listens on `http://localhost:8080`; health check is `GET /health`. The React demo can be run from `web/` with `npm install && npm run dev`.
+
+## Security boundaries
+
+- Raw PAN/CVV are rejected at the API boundary.
+- Request and response bodies are marked `no-store`.
+- Idempotency keys are required and bounded in length.
+- Audit events contain identifiers and decisions, never payment secrets.
+- Production deployment must add authentication, TLS, provider webhook verification, rate limiting, encrypted storage, key rotation, and a real transactional idempotency table.
