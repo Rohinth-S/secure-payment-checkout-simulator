@@ -5,7 +5,9 @@ services:
     environment:
       PORT: 8080
       DATABASE_URL: postgres://checkout:checkout@postgres:5432/checkout
-    depends_on: [postgres]
+    depends_on:
+      postgres:
+        condition: service_healthy
   postgres:
     image: postgres:16-alpine
     environment:
@@ -16,5 +18,11 @@ services:
     volumes:
       - checkout-data:/var/lib/postgresql/data
       - ./sql/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+      - ./sql/002-provider-columns.sql:/docker-entrypoint-initdb.d/002-provider-columns.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U checkout -d checkout"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 volumes:
   checkout-data:
