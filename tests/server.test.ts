@@ -34,6 +34,13 @@ test("Stripe webhook updates a persisted provider status after signature verific
   const webhookResponse = await fetch(`http://127.0.0.1:${address.port}/v1/webhooks/stripe`, { method: "POST", headers: { "content-type": "application/json", "stripe-signature": `t=${timestamp},v1=${signature}` }, body: webhookBody });
   const webhook = await webhookResponse.json() as { received: boolean; updated: boolean };
   assert.equal(webhookResponse.status, 200); assert.equal(webhook.received, true); assert.equal(webhook.updated, true);
+  const reconciliationResponse = await fetch(`http://127.0.0.1:${address.port}/v1/operations/reconciliation`);
+  const reconciliation = await reconciliationResponse.json() as { size: number; events: Array<{ providerId: string; status: string; receivedAt: string }> };
+  assert.equal(reconciliationResponse.status, 200); assert.equal(reconciliation.size, 1); assert.deepEqual(reconciliation.events[0], { providerId: "pi_server_1", status: "succeeded", receivedAt: reconciliation.events[0].receivedAt });
+  const acknowledged = await fetch(`http://127.0.0.1:${address.port}/v1/operations/reconciliation/pi_server_1/ack`, { method: "POST" });
+  assert.equal(acknowledged.status, 200);
+  const health = await (await fetch(`http://127.0.0.1:${address.port}/health`)).json() as { metrics: { counters: Record<string, number>; gauges: Record<string, number> } };
+  assert.equal(health.metrics.counters["webhooks.received"], 1); assert.equal(health.metrics.gauges["reconciliation.pending"], 0);
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   if (previous === undefined) delete process.env.STRIPE_WEBHOOK_SECRET; else process.env.STRIPE_WEBHOOK_SECRET = previous;
 });
