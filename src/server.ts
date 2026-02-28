@@ -1,13 +1,16 @@
 import http from "node:http"; import { randomUUID } from "node:crypto"; import { Pool } from "pg"; import { createCheckout, type CheckoutRequest } from "./domain/checkout.js"; import { AuditLog } from "./audit.js"; import { MemoryCheckoutRepository, PostgresCheckoutRepository, type CheckoutRepository } from "./persistence.js"; import { StripePaymentClient, verifyStripeSignature } from "./providers/stripe.js"; import { MetricsRegistry } from "./metrics.js"; import { ReconciliationOutbox } from "./outbox.js";
+import { RateLimiter } from "./rateLimit.js";
 function send(res:http.ServerResponse,status:number,body:unknown){res.writeHead(status,{"content-type":"application/json","cache-control":"no-store"});res.end(JSON.stringify(body))}
 async function rawBody(req:http.IncomingMessage){let raw=""; for await(const chunk of req) raw+=chunk; if(raw.length>100_000) throw new Error("payload too large"); return raw;}
 export function createServer(repository: CheckoutRepository = defaultRepository(), stripeClient?: Pick<StripePaymentClient, "createPaymentIntent">) {
   const audit = new AuditLog();
   const metrics = new MetricsRegistry();
   const reconciliation = new ReconciliationOutbox();
+  const limiter = new RateLimiter(Number(process.env.CHECKOUT_RATE_LIMIT ?? "120"));
   return http.createServer(async (req, res) => {
     const requestId = req.headers["x-request-id"]?.toString() ?? randomUUID();
     try {
+      if (req.method === "POST" && req.url === "/v1/checkouts") { const decision = limiter.consume(req.socket.remoteAddress ?? "unknown"); if (!decision.allowed) { metrics.increment("checkouts.rate_limited"); send(res, 429, { error: "rate_limited", retryAfterSeconds: decision.retryAfterSeconds, requestId }); return; } }
       if (req.method === "GET" && req.url === "/health") { metrics.setGauge("reconciliation.pending", reconciliation.size()); send(res, 200, { ok: true, metrics: metrics.snapshot() }); return; }
       if (req.method === "GET" && req.url === "/v1/operations/reconciliation") { send(res, 200, { events: reconciliation.peek(), size: reconciliation.size() }); return; }
       if (req.method === "POST" && req.url?.startsWith("/v1/operations/reconciliation/") && req.url.endsWith("/ack")) {
