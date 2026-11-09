@@ -4,6 +4,8 @@ A production-style checkout simulator that makes the hard payment concerns expli
 
 It is a simulator, not a live payment processor. It never accepts raw card numbers and never claims to settle money. When `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are set, the same API can use Stripe test mode for PaymentIntent creation and signed webhook reconciliation; live keys are intentionally not committed.
 
+Live web client: https://secure-payment-checkout-simulator.vercel.app
+
 ## Architecture
 
 ```mermaid
