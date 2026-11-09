@@ -1,7 +1,7 @@
 import http from "node:http"; import { randomUUID } from "node:crypto"; import { Pool } from "pg"; import { createCheckout, type CheckoutRequest } from "./domain/checkout.js"; import { AuditLog } from "./audit.js"; import { MemoryCheckoutRepository, PostgresCheckoutRepository, type CheckoutRepository } from "./persistence.js"; import { StripePaymentClient, verifyStripeSignature } from "./providers/stripe.js";
 function send(res:http.ServerResponse,status:number,body:unknown){res.writeHead(status,{"content-type":"application/json","cache-control":"no-store"});res.end(JSON.stringify(body))}
 async function rawBody(req:http.IncomingMessage){let raw=""; for await(const chunk of req) raw+=chunk; if(raw.length>100_000) throw new Error("payload too large"); return raw;}
-export function createServer(repository: CheckoutRepository = defaultRepository(), stripeClient?: StripePaymentClient) {
+export function createServer(repository: CheckoutRepository = defaultRepository(), stripeClient?: Pick<StripePaymentClient, "createPaymentIntent">) {
   const audit = new AuditLog();
   return http.createServer(async (req, res) => {
     const requestId = req.headers["x-request-id"]?.toString() ?? randomUUID();

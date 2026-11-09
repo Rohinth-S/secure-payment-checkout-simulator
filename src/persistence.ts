@@ -22,7 +22,7 @@ export class MemoryCheckoutRepository implements CheckoutRepository {
 
   async updateProvider(id: string, provider: { id: string; status: string }) {
     for (const [key, value] of this.entries) {
-      if (value.id === id) {
+      if (value.id === id || value.provider?.id === id) {
         const updated = { ...value, provider };
         this.entries.set(key, updated);
         return updated;
@@ -73,7 +73,7 @@ export class PostgresCheckoutRepository implements CheckoutRepository {
 
   async updateProvider(id: string, provider: { id: string; status: string }) {
     const { rows } = await this.pool.query(
-      `update checkout_attempts set provider_id = $1, provider_status = $2 where id = $3 returning id, order_id, amount_minor, currency, status, fraud_score, fraud_reasons, token_fingerprint, provider_id, provider_status, created_at`,
+      `update checkout_attempts set provider_id = $1, provider_status = $2 where id = $3 or provider_id = $3 returning id, order_id, amount_minor, currency, status, fraud_score, fraud_reasons, token_fingerprint, provider_id, provider_status, created_at`,
       [provider.id, provider.status, id],
     );
     const row = rows[0];
