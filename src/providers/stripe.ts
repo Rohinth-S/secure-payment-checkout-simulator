@@ -6,7 +6,8 @@ export class StripePaymentClient {
   constructor(private readonly secretKey: string, private readonly fetcher: typeof fetch = fetch) {}
 
   async createPaymentIntent(input: { amountMinor: number; currency: string; paymentMethodToken: string; orderId: string; idempotencyKey: string }): Promise<StripePaymentIntent> {
-    const form = new URLSearchParams({ amount: String(input.amountMinor), currency: input.currency.toLowerCase(), payment_method: input.paymentMethodToken, confirm: "true", metadata: JSON.stringify({ order_id: input.orderId }) });
+    const form = new URLSearchParams({ amount: String(input.amountMinor), currency: input.currency.toLowerCase(), payment_method: input.paymentMethodToken, confirm: "true" });
+    form.set("metadata[order_id]", input.orderId);
     const response = await this.fetcher("https://api.stripe.com/v1/payment_intents", { method: "POST", headers: { authorization: `Bearer ${this.secretKey}`, "content-type": "application/x-www-form-urlencoded", "idempotency-key": input.idempotencyKey }, body: form });
     const payload = await response.json() as StripePaymentIntent & { error?: { message?: string } };
     if (!response.ok) throw new Error(payload.error?.message ?? `Stripe request failed (${response.status})`);
