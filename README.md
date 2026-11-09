@@ -2,7 +2,7 @@
 
 A production-style checkout simulator that makes the hard payment concerns explicit: token-only inputs, validation, idempotency, deterministic fraud decisions, audit events, PostgreSQL schema, Docker packaging, and a small React client.
 
-It is a simulator, not a live payment processor. It never accepts raw card numbers and never claims to settle money.
+It is a simulator, not a live payment processor. It never accepts raw card numbers and never claims to settle money. When `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are set, the same API can use Stripe test mode for PaymentIntent creation and signed webhook reconciliation; live keys are intentionally not committed.
 
 ## Architecture
 
@@ -23,7 +23,9 @@ flowchart LR
 src/
   domain/checkout.ts  request contract, token fingerprinting, fraud rules, result factory
   audit.ts            append-only audit event abstraction
-  server.ts           HTTP boundary, error mapping, idempotency replay
+  server.ts           HTTP boundary, error mapping, idempotency replay, Stripe webhook route
+  persistence.ts      memory and PostgreSQL repository implementations
+  providers/stripe.ts Stripe test-mode adapter and signature verification
 sql/schema.sql        durable persistence contract
 web/                  React demo client
  tests/               domain invariants
@@ -60,6 +62,8 @@ docker compose up --build
 ```
 
 The API listens on `http://localhost:8080`; health check is `GET /health`. The React demo can be run from `web/` with `npm install && npm run dev`.
+
+To enable Stripe test mode, copy `.env.example` to `.env`, set `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`, and start the API with those variables loaded. The adapter sends the same idempotency key to Stripe. Configure your Stripe CLI or dashboard webhook endpoint to `POST /v1/webhooks/stripe`; signatures are rejected unless the timestamped HMAC matches and is within the replay tolerance window. Live keys are refused unless `ALLOW_LIVE_STRIPE=true` is explicitly set.
 
 ## Security boundaries
 
