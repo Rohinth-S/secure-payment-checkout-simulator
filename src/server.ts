@@ -1,12 +1,20 @@
-import http from "node:http"; import { randomUUID } from "node:crypto"; import { Pool } from "pg"; import { createCheckout, type CheckoutRequest } from "./domain/checkout.js"; import { AuditLog } from "./audit.js"; import { MemoryCheckoutRepository, PostgresCheckoutRepository, type CheckoutRepository } from "./persistence.js"; import { StripePaymentClient, verifyStripeSignature } from "./providers/stripe.js";
+import http from "node:http"; import { randomUUID } from "node:crypto"; import { Pool } from "pg"; import { createCheckout, type CheckoutRequest } from "./domain/checkout.js"; import { AuditLog } from "./audit.js"; import { MemoryCheckoutRepository, PostgresCheckoutRepository, type CheckoutRepository } from "./persistence.js"; import { StripePaymentClient, verifyStripeSignature } from "./providers/stripe.js"; import { MetricsRegistry } from "./metrics.js"; import { ReconciliationOutbox } from "./outbox.js";
 function send(res:http.ServerResponse,status:number,body:unknown){res.writeHead(status,{"content-type":"application/json","cache-control":"no-store"});res.end(JSON.stringify(body))}
 async function rawBody(req:http.IncomingMessage){let raw=""; for await(const chunk of req) raw+=chunk; if(raw.length>100_000) throw new Error("payload too large"); return raw;}
 export function createServer(repository: CheckoutRepository = defaultRepository(), stripeClient?: Pick<StripePaymentClient, "createPaymentIntent">) {
   const audit = new AuditLog();
+  const metrics = new MetricsRegistry();
+  const reconciliation = new ReconciliationOutbox();
   return http.createServer(async (req, res) => {
     const requestId = req.headers["x-request-id"]?.toString() ?? randomUUID();
     try {
-      if (req.method === "GET" && req.url === "/health") { send(res, 200, { ok: true }); return; }
+      if (req.method === "GET" && req.url === "/health") { metrics.setGauge("reconciliation.pending", reconciliation.size()); send(res, 200, { ok: true, metrics: metrics.snapshot() }); return; }
+      if (req.method === "GET" && req.url === "/v1/operations/reconciliation") { send(res, 200, { events: reconciliation.peek(), size: reconciliation.size() }); return; }
+      if (req.method === "POST" && req.url?.startsWith("/v1/operations/reconciliation/") && req.url.endsWith("/ack")) {
+        const providerId = decodeURIComponent(req.url.slice("/v1/operations/reconciliation/".length, -"/ack".length));
+        const acknowledged = reconciliation.acknowledge(providerId); metrics.increment("reconciliation.acknowledged", acknowledged ? 1 : 0); metrics.setGauge("reconciliation.pending", reconciliation.size());
+        send(res, acknowledged ? 200 : 404, { acknowledged, providerId }); return;
+      }
       if (req.method === "POST" && req.url === "/v1/webhooks/stripe") {
         const raw = await rawBody(req);
         const secret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -14,14 +22,18 @@ export function createServer(repository: CheckoutRepository = defaultRepository(
         const event = JSON.parse(raw) as { type?: string; data?: { object?: { id?: string; status?: string } } };
         const providerId = event.data?.object?.id;
         const providerStatus = event.data?.object?.status;
+        metrics.increment("webhooks.received");
         const updated = providerId && providerStatus ? await repository.updateProvider(providerId, { id: providerId, status: providerStatus }) : undefined;
+        if (providerId && providerStatus) reconciliation.enqueue({ providerId, status: providerStatus, receivedAt: new Date().toISOString() });
+        if (updated) metrics.increment("webhooks.updated");
+        metrics.setGauge("reconciliation.pending", reconciliation.size());
         send(res, 200, { received: true, updated: Boolean(updated), requestId }); return;
       }
       if (req.method !== "POST" || req.url !== "/v1/checkouts") { send(res, 404, { error: "not_found", requestId }); return; }
       const key = req.headers["idempotency-key"]?.toString();
       if (!key || key.length < 12 || key.length > 128) { send(res, 400, { error: "idempotency_key_required", requestId }); return; }
       const existing = await repository.findByIdempotencyKey(key);
-      if (existing) { audit.append({ type: "checkout.replayed", checkoutId: existing.id, orderId: existing.orderId, requestId, at: new Date().toISOString() }); send(res, 200, { ...existing, replayed: true, requestId }); return; }
+      if (existing) { metrics.increment("checkouts.replayed"); audit.append({ type: "checkout.replayed", checkoutId: existing.id, orderId: existing.orderId, requestId, at: new Date().toISOString() }); send(res, 200, { ...existing, replayed: true, requestId }); return; }
       const input = JSON.parse(await rawBody(req)) as CheckoutRequest;
       let result = await repository.save(key, createCheckout(input));
       if (stripeClient && result.status === "authorized") {
@@ -33,6 +45,7 @@ export function createServer(repository: CheckoutRepository = defaultRepository(
           send(res, 502, { error: "provider_error", message, requestId }); return;
         }
       }
+      metrics.increment("checkouts.created");
       audit.append({ type: "checkout.created", checkoutId: result.id, orderId: result.orderId, requestId, at: result.createdAt });
       send(res, result.status === "declined" ? 402 : 201, { ...result, replayed: false, requestId });
     } catch (error) {
