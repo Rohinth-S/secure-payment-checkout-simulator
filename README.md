@@ -15,6 +15,10 @@ flowchart LR
   Fraud --> Result[Authorization result]
   Result --> Audit[Audit event]
   Result --> DB[(PostgreSQL checkout_attempts)]
+  Result --> Stripe[Optional Stripe test adapter]
+  Stripe --> PSP[Stripe PaymentIntent]
+  PSP --> Hook[Signed webhook]
+  Hook --> API
 ```
 
 ## Structural overview
@@ -44,7 +48,7 @@ docker-compose.yml    API + PostgreSQL local environment
 
 ## Why this shape
 
-The domain layer is independent of HTTP and PostgreSQL so the important invariants can be tested without a running service. The idempotency store is an interface-shaped in-memory implementation for the demo; a production deployment should use a unique database constraint plus an atomic insert/read transaction. Rule-based fraud is intentionally explainable and deterministic; a model can be added later behind the same decision contract, but it should not replace auditability or allow/deny policy review.
+The domain layer is independent of HTTP and PostgreSQL so the important invariants can be tested without a running service. The repository boundary uses in-memory storage for deterministic tests and PostgreSQL with a unique idempotency constraint for Docker/production. Rule-based fraud is intentionally explainable and deterministic; a model can be added later behind the same decision contract, but it should not replace auditability or allow/deny policy review.
 
 ## Run locally
 
