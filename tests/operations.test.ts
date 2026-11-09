@@ -3,6 +3,7 @@ import test from "node:test";
 import { createCheckout, evaluateFraud, type FraudPolicy } from "../src/domain/checkout.js";
 import { MetricsRegistry } from "../src/metrics.js";
 import { ReconciliationOutbox } from "../src/outbox.js";
+import { RateLimiter } from "../src/rateLimit.js";
 
 test("risk policy versions make fraud decisions reproducible", () => {
   const input = { orderId: "ord_policy_1", amountMinor: 5000, currency: "USD", paymentMethodToken: "tok_demo", customer: { email: "buyer@example.com", ip: "203.0.113.8" } };
@@ -34,4 +35,13 @@ test("metrics registry returns immutable snapshots of counters and gauges", () =
   assert.deepEqual(snapshot, { counters: { "checkouts.created": 3 }, gauges: { "reconciliation.pending": 3 } });
   snapshot.counters["checkouts.created"] = 99;
   assert.equal(metrics.snapshot().counters["checkouts.created"], 3);
+});
+
+test("rate limiter returns retry guidance and resets windows", () => {
+  const limiter = new RateLimiter(2, 1000);
+  assert.equal(limiter.consume("client", 0).allowed, true);
+  assert.equal(limiter.consume("client", 10).allowed, true);
+  const blocked = limiter.consume("client", 20);
+  assert.equal(blocked.allowed, false); assert.equal(blocked.remaining, 0); assert.equal(blocked.retryAfterSeconds, 1);
+  assert.equal(limiter.consume("client", 1000).allowed, true);
 });
